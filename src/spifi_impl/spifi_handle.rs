@@ -1,7 +1,9 @@
-use mik32v2_pac::{
-    PadConfig, Pm, SpifiConfig
-};
+#![allow(dead_code)]
+#![allow(non_camel_case_types)]
+
 use super::cmd::Command;
+use mik32v2_pac::{PadConfig, Pm, SpifiConfig};
+
 
 enum SpifiHandleError {
     TIMEOUT,
@@ -10,7 +12,7 @@ enum SpifiHandleError {
 }
 
 struct SpifiHandle {
-    _marker: core::marker::PhantomData<()>, 
+    _marker: core::marker::PhantomData<()>,
 }
 
 impl SpifiHandle {
@@ -18,10 +20,8 @@ impl SpifiHandle {
     unsafe fn spifi_msp_init() {
         let pm = Pm::steal();
         let pad_cfg = PadConfig::steal();
-    
-        pm.clk_ahb_set().modify(|_, w| {
-            w.spifi().enable()
-        });
+        
+        pm.clk_ahb_set().modify(|_, w| w.spifi().enable());
 
         pad_cfg.pad2_cfg().modify(|_, w| {
             w.port_2_0().func2_interface();
@@ -48,11 +48,12 @@ impl SpifiHandle {
             SpifiHandle::spifi_msp_init();
         }
         Self {
-            _marker: core::marker::PhantomData
+            _marker: core::marker::PhantomData,
         }
     }
 
     fn send_command(
+        &self,
         cmd: Command,
         addr: u32,
         buff_len: u16,
@@ -63,13 +64,13 @@ impl SpifiHandle {
     ) -> Result<(), SpifiHandleError> {
         unsafe {
             SpifiHandle::send_command_private(
-                cmd.bits(), 
-                addr, 
-                buff_len, 
-                read_buffer, 
-                write_buffer, 
-                interim_data, 
-                timeout
+                cmd.bits(),
+                addr,
+                buff_len,
+                read_buffer,
+                write_buffer,
+                interim_data,
+                timeout,
             )?;
         }
         Ok(())
@@ -83,48 +84,43 @@ impl SpifiHandle {
         write_buffer: &[u8],
         interim_data: u32,
         timeout: u32,
-    ) -> Result<(), SpifiHandleError>{
+    ) -> Result<(), SpifiHandleError> {
         let spifi = SpifiConfig::steal();
 
-        spifi.stat().modify(|_, w| {
-            w.intrq().set_bit()
-        });
-        spifi.address().write(|w| {
-            w.address().bits(addr)
-        });
-        spifi.idata().write(| w| {
-            w.bits(interim_data)
-        });
-        spifi.cmd().write(|w| {
-            w.bits(cmd).datalen().bits(buff_len)
-        });
+        spifi.stat().modify(|_, w| w.intrq().set_bit());
+        spifi.address().write(|w| w.address().bits(addr));
+        spifi.idata().write(|w| w.bits(interim_data));
+        spifi.cmd().write(|w| w.bits(cmd).datalen().bits(buff_len));
 
         let command = spifi.cmd().read();
-
+        let curr_data;
         if command.dout().bit_is_set() {
             if (buff_len > 0) && (write_buffer.len() == 0) {
-                return Err(SpifiHandleError::INVALID_BUFFER_SIZE)
+                return Err(SpifiHandleError::INVALID_BUFFER_SIZE);
             }
             for &i in write_buffer {
-                spifi.data().write(|w| {
-                    w.data8().bits(i)
-                });
+                spifi.data().write(|w| w.data8().bits(i));
             }
+            curr_data = spifi.data().read();
         } else {
             if (buff_len > 0) && (read_buffer.len() == 0) {
                 return Err(SpifiHandleError::INVALID_BUFFER_SIZE);
             }
 
-            for  i in 0..buff_len{
+            for i in 0..buff_len {
                 read_buffer[i as usize] = spifi.data().read().data8().bits() as u8;
             }
+            curr_data = spifi.data().read();
         }
 
         let status = SpifiHandle::wait_cmd_processing(timeout);
 
         if status.is_ok() && (command.poll().bit_is_set()) {
-            return Err(SpifiHandleError::ERROR)
-        }
+            if curr_data == (cmd & 8) {
+                return Ok(());
+            }
+            return Err(SpifiHandleError::ERROR);
+        } //Idk what it is. Some black magic 
 
         Ok(())
     }

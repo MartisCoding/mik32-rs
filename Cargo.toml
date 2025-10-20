@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 mik32v2-pac = { git = "https://github.com/mik32-rs/mik32v2-pac.git" }
+ufmt = "*"
